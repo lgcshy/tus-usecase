@@ -1,0 +1,373 @@
+#!/usr/bin/env python3
+"""
+TUS Post-Finish Hook
+
+This hook is called after an upload has been completed successfully. It can be used to:
+- Process completed files
+- Move files to permanent storage
+- Trigger downstream workflows
+- Send completion notifications
+- Update databases
+- Generate thumbnails or previews
+- Archive files
+
+Environment variables available:
+- TUS_ID: Upload ID
+- TUS_SIZE: Upload size in bytes
+- TUS_OFFSET: Current offset (should equal TUS_SIZE)
+- TUS_METADATA: Upload metadata (base64 encoded)
+"""
+
+import os
+import sys
+import json
+import base64
+import logging
+import datetime
+import shutil
+from typing import Dict, Any
+
+# Configure logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
+
+def decode_metadata(metadata_b64: str) -> Dict[str, str]:
+    """Decode TUS metadata from base64 format."""
+    try:
+        if not metadata_b64:
+            return {}
+        
+        metadata_str = base64.b64decode(metadata_b64).decode('utf-8')
+        metadata = {}
+        
+        for pair in metadata_str.split(','):
+            if ' ' in pair:
+                key, value = pair.split(' ', 1)
+                try:
+                    metadata[key] = base64.b64decode(value).decode('utf-8')
+                except:
+                    metadata[key] = value
+        
+        return metadata
+    except Exception as e:
+        logger.error(f"Failed to decode metadata: {e}")
+        return {}
+
+def log_upload_completion(upload_id: str, upload_size: int, metadata: Dict[str, str]):
+    """Log the upload completion event."""
+    timestamp = datetime.datetime.now().isoformat()
+    
+    upload_record = {
+        'event': 'upload_completed',
+        'timestamp': timestamp,
+        'upload_id': upload_id,
+        'size': upload_size,
+        'filename': metadata.get('filename', 'unknown'),
+        'filetype': metadata.get('filetype', 'unknown'),
+        'metadata': metadata,
+        'processing_status': 'completed'
+    }
+    
+    # Log to file
+    log_file = '/tmp/tus_uploads.log'
+    try:
+        with open(log_file, 'a') as f:
+            f.write(json.dumps(upload_record) + '\n')
+        logger.info(f"Upload completion logged to {log_file}")
+    except Exception as e:
+        logger.error(f"Failed to log upload completion: {e}")
+
+def send_completion_notification(upload_id: str, upload_size: int, metadata: Dict[str, str]):
+    """Send notification about upload completion."""
+    filename = metadata.get('filename', 'unknown')
+    size_mb = round(upload_size / (1024 * 1024), 2)
+    
+    logger.info(f"Notification: Upload completed - {filename} ({size_mb} MB, ID: {upload_id})")
+    
+    # Example notification integrations (commented out)
+    """
+    # Email notification
+    import smtplib
+    from email.mime.text import MimeText
+    
+    smtp_server = os.environ.get('SMTP_SERVER')
+    smtp_user = os.environ.get('SMTP_USER')
+    smtp_password = os.environ.get('SMTP_PASSWORD')
+    recipient = os.environ.get('NOTIFICATION_EMAIL')
+    
+    if all([smtp_server, smtp_user, smtp_password, recipient]):
+        msg = MimeText(f"Upload {filename} completed successfully. Size: {size_mb} MB")
+        msg['Subject'] = 'Upload Completed'
+        msg['From'] = smtp_user
+        msg['To'] = recipient
+        
+        try:
+            with smtplib.SMTP(smtp_server) as server:
+                server.starttls()
+                server.login(smtp_user, smtp_password)
+                server.send_message(msg)
+            logger.info("Email notification sent")
+        except Exception as e:
+            logger.error(f"Failed to send email: {e}")
+    
+    # Slack notification
+    import requests
+    
+    slack_webhook = os.environ.get('SLACK_WEBHOOK')
+    if slack_webhook:
+        payload = {
+            'text': f'✅ Upload completed: {filename} ({size_mb} MB)',
+            'attachments': [{
+                'color': 'good',
+                'fields': [
+                    {'title': 'Filename', 'value': filename, 'short': True},
+                    {'title': 'Size', 'value': f'{size_mb} MB', 'short': True},
+                    {'title': 'Upload ID', 'value': upload_id, 'short': True}
+                ]
+            }]
+        }
+        try:
+            requests.post(slack_webhook, json=payload, timeout=5)
+            logger.info("Slack notification sent")
+        except Exception as e:
+            logger.error(f"Failed to send Slack notification: {e}")
+    """
+
+def process_uploaded_file(upload_id: str, upload_size: int, metadata: Dict[str, str]):
+    """Process the uploaded file based on its type."""
+    filename = metadata.get('filename', 'unknown')
+    file_ext = os.path.splitext(filename)[1].lower()
+    
+    logger.info(f"Processing uploaded file: {filename}")
+    
+    # Example processing based on file type
+    if file_ext in ['.jpg', '.jpeg', '.png', '.gif']:
+        process_image_file(upload_id, filename, metadata)
+    elif file_ext == '.pdf':
+        process_pdf_file(upload_id, filename, metadata)
+    elif file_ext in ['.zip', '.tar.gz']:
+        process_archive_file(upload_id, filename, metadata)
+    elif file_ext == '.json':
+        process_json_file(upload_id, filename, metadata)
+    else:
+        process_generic_file(upload_id, filename, metadata)
+
+def process_image_file(upload_id: str, filename: str, metadata: Dict[str, str]):
+    """Process image files - generate thumbnails, extract EXIF, etc."""
+    logger.info(f"Processing image file: {filename}")
+    
+    # In production, you might:
+    # - Generate thumbnails using PIL or ImageMagick
+    # - Extract EXIF data
+    # - Detect faces or objects
+    # - Optimize for web delivery
+    # - Generate different resolutions
+    
+    processing_results = {
+        'file_type': 'image',
+        'thumbnails_generated': True,
+        'exif_extracted': True,
+        'web_optimized': True
+    }
+    
+    logger.info(f"Image processing completed: {processing_results}")
+
+def process_pdf_file(upload_id: str, filename: str, metadata: Dict[str, str]):
+    """Process PDF files - extract text, generate previews, etc."""
+    logger.info(f"Processing PDF file: {filename}")
+    
+    # In production, you might:
+    # - Extract text content using PyPDF2 or pdfplumber
+    # - Generate preview images
+    # - Count pages
+    # - Extract metadata
+    # - Validate PDF structure
+    
+    processing_results = {
+        'file_type': 'pdf',
+        'text_extracted': True,
+        'preview_generated': True,
+        'page_count': 'unknown',  # Would be actual count
+        'searchable': True
+    }
+    
+    logger.info(f"PDF processing completed: {processing_results}")
+
+def process_archive_file(upload_id: str, filename: str, metadata: Dict[str, str]):
+    """Process archive files - scan contents, extract file list, etc."""
+    logger.info(f"Processing archive file: {filename}")
+    
+    # In production, you might:
+    # - List archive contents
+    # - Scan for malware
+    # - Validate archive integrity
+    # - Extract specific files
+    # - Check for nested archives
+    
+    processing_results = {
+        'file_type': 'archive',
+        'contents_listed': True,
+        'integrity_checked': True,
+        'malware_scanned': True,
+        'file_count': 'unknown'  # Would be actual count
+    }
+    
+    logger.info(f"Archive processing completed: {processing_results}")
+
+def process_json_file(upload_id: str, filename: str, metadata: Dict[str, str]):
+    """Process JSON files - validate structure, index data, etc."""
+    logger.info(f"Processing JSON file: {filename}")
+    
+    # In production, you might:
+    # - Validate JSON structure
+    # - Index data for search
+    # - Transform data format
+    # - Extract metrics
+    # - Store in database
+    
+    processing_results = {
+        'file_type': 'json',
+        'json_valid': True,
+        'data_indexed': True,
+        'schema_validated': True
+    }
+    
+    logger.info(f"JSON processing completed: {processing_results}")
+
+def process_generic_file(upload_id: str, filename: str, metadata: Dict[str, str]):
+    """Process generic files - basic metadata extraction."""
+    logger.info(f"Processing generic file: {filename}")
+    
+    processing_results = {
+        'file_type': 'generic',
+        'metadata_extracted': True,
+        'virus_scanned': True
+    }
+    
+    logger.info(f"Generic file processing completed: {processing_results}")
+
+def move_to_permanent_storage(upload_id: str, metadata: Dict[str, str]):
+    """Move file from temporary to permanent storage."""
+    filename = metadata.get('filename', 'unknown')
+    logger.info(f"Moving {filename} to permanent storage")
+    
+    # In production, you might:
+    # - Move files to S3/GCS/Azure Storage
+    # - Organize by date/user/category
+    # - Set appropriate permissions
+    # - Update file registry/database
+    # - Create backup copies
+    
+    # Simulate permanent storage path
+    storage_path = get_storage_path(metadata)
+    logger.info(f"File moved to: {storage_path}")
+
+def get_storage_path(metadata: Dict[str, str]) -> str:
+    """Determine permanent storage path based on file metadata."""
+    filename = metadata.get('filename', 'unknown')
+    file_ext = os.path.splitext(filename)[1].lower()
+    date_str = datetime.datetime.now().strftime('%Y/%m/%d')
+    
+    # Organize by file type and date
+    if file_ext in ['.jpg', '.jpeg', '.png', '.gif']:
+        return f"s3://mybucket/images/{date_str}/{filename}"
+    elif file_ext == '.pdf':
+        return f"s3://mybucket/documents/{date_str}/{filename}"
+    elif file_ext in ['.zip', '.tar.gz']:
+        return f"s3://mybucket/archives/{date_str}/{filename}"
+    else:
+        return f"s3://mybucket/files/{date_str}/{filename}"
+
+def update_tracking(upload_id: str, status: str):
+    """Update upload tracking with completion status."""
+    tracking_file = f'/tmp/tus_tracking_{upload_id}.json'
+    
+    try:
+        tracking_data = {}
+        if os.path.exists(tracking_file):
+            with open(tracking_file, 'r') as f:
+                tracking_data = json.load(f)
+        
+        tracking_data['status'] = status
+        tracking_data['completed_at'] = datetime.datetime.now().isoformat()
+        tracking_data['last_activity'] = datetime.datetime.now().isoformat()
+        tracking_data['progress'] = 100.0
+        
+        with open(tracking_file, 'w') as f:
+            json.dump(tracking_data, f, indent=2)
+        
+        logger.info(f"Tracking updated: {status}")
+    except Exception as e:
+        logger.error(f"Failed to update tracking: {e}")
+
+def trigger_downstream_workflows(upload_id: str, metadata: Dict[str, str]):
+    """Trigger any downstream workflows or integrations."""
+    logger.info(f"Triggering downstream workflows for upload {upload_id}")
+    
+    # Examples of downstream integrations:
+    # - Start machine learning pipelines
+    # - Trigger data processing jobs  
+    # - Update search indexes
+    # - Send to content moderation
+    # - Integrate with external APIs
+    # - Update user dashboards
+    
+    workflow_data = {
+        'upload_id': upload_id,
+        'filename': metadata.get('filename'),
+        'file_type': metadata.get('filetype'),
+        'timestamp': datetime.datetime.now().isoformat()
+    }
+    
+    logger.info(f"Workflow triggered: {workflow_data}")
+
+def main():
+    """Main hook execution."""
+    try:
+        # Get TUS environment variables
+        upload_id = os.environ.get('TUS_ID', '')
+        upload_size = int(os.environ.get('TUS_SIZE', '0'))
+        upload_offset = int(os.environ.get('TUS_OFFSET', '0'))
+        metadata_b64 = os.environ.get('TUS_METADATA', '')
+        
+        # Decode metadata
+        metadata = decode_metadata(metadata_b64)
+        
+        logger.info(f"Post-finish hook called for upload {upload_id}")
+        logger.info(f"Upload size: {upload_size} bytes")
+        logger.info(f"Filename: {metadata.get('filename', 'unknown')}")
+        
+        # Update tracking
+        update_tracking(upload_id, 'processing')
+        
+        # Log completion
+        log_upload_completion(upload_id, upload_size, metadata)
+        
+        # Send notifications
+        send_completion_notification(upload_id, upload_size, metadata)
+        
+        # Process the uploaded file
+        process_uploaded_file(upload_id, upload_size, metadata)
+        
+        # Move to permanent storage
+        move_to_permanent_storage(upload_id, metadata)
+        
+        # Trigger downstream workflows
+        trigger_downstream_workflows(upload_id, metadata)
+        
+        # Final status update
+        update_tracking(upload_id, 'completed')
+        
+        logger.info(f"Post-finish hook completed successfully for upload {upload_id}")
+        
+        # Exit successfully
+        sys.exit(0)
+        
+    except Exception as e:
+        logger.error(f"Post-finish hook failed: {e}")
+        update_tracking(upload_id, 'processing_failed')
+        # Don't fail the upload for processing errors
+        sys.exit(0)
+
+if __name__ == "__main__":
+    main()

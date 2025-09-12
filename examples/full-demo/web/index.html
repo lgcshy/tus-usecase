@@ -1,0 +1,397 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TUS Upload Demo</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 2rem;
+            background: #f5f5f5;
+        }
+        .container {
+            background: white;
+            padding: 2rem;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        h1 {
+            color: #333;
+            margin-bottom: 0.5rem;
+        }
+        .subtitle {
+            color: #666;
+            margin-bottom: 2rem;
+        }
+        .upload-area {
+            border: 2px dashed #ddd;
+            border-radius: 8px;
+            padding: 3rem;
+            text-align: center;
+            margin-bottom: 2rem;
+            cursor: pointer;
+            transition: border-color 0.3s;
+        }
+        .upload-area:hover {
+            border-color: #007bff;
+        }
+        .upload-area.dragover {
+            border-color: #007bff;
+            background: #f8f9ff;
+        }
+        .file-input {
+            display: none;
+        }
+        .upload-text {
+            color: #666;
+            font-size: 1.1rem;
+            margin-bottom: 1rem;
+        }
+        .btn {
+            background: #007bff;
+            color: white;
+            border: none;
+            padding: 0.75rem 1.5rem;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 1rem;
+            transition: background-color 0.3s;
+        }
+        .btn:hover {
+            background: #0056b3;
+        }
+        .btn:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+        }
+        .progress-container {
+            display: none;
+            margin: 2rem 0;
+        }
+        .progress-bar {
+            width: 100%;
+            height: 20px;
+            background: #f0f0f0;
+            border-radius: 10px;
+            overflow: hidden;
+            margin-bottom: 0.5rem;
+        }
+        .progress-fill {
+            height: 100%;
+            background: #007bff;
+            width: 0%;
+            transition: width 0.3s ease;
+        }
+        .progress-text {
+            display: flex;
+            justify-content: space-between;
+            font-size: 0.9rem;
+            color: #666;
+        }
+        .file-info {
+            background: #f8f9fa;
+            padding: 1rem;
+            border-radius: 4px;
+            margin-bottom: 1rem;
+            display: none;
+        }
+        .file-info h3 {
+            margin: 0 0 0.5rem 0;
+            color: #333;
+        }
+        .file-info p {
+            margin: 0.25rem 0;
+            color: #666;
+        }
+        .upload-result {
+            display: none;
+            background: #d4edda;
+            border: 1px solid #c3e6cb;
+            color: #155724;
+            padding: 1rem;
+            border-radius: 4px;
+            margin-top: 1rem;
+        }
+        .error-message {
+            display: none;
+            background: #f8d7da;
+            border: 1px solid #f5c6cb;
+            color: #721c24;
+            padding: 1rem;
+            border-radius: 4px;
+            margin-top: 1rem;
+        }
+        .metadata-section {
+            margin: 2rem 0;
+            padding: 1.5rem;
+            background: #f8f9fa;
+            border-radius: 4px;
+        }
+        .metadata-section h3 {
+            margin: 0 0 1rem 0;
+            color: #333;
+        }
+        .metadata-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 1rem;
+        }
+        .metadata-field {
+            display: flex;
+            flex-direction: column;
+        }
+        .metadata-field label {
+            color: #666;
+            font-size: 0.9rem;
+            margin-bottom: 0.25rem;
+        }
+        .metadata-field input {
+            padding: 0.5rem;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-size: 1rem;
+        }
+        .demo-info {
+            background: #e3f2fd;
+            border-left: 4px solid #2196f3;
+            padding: 1rem;
+            margin-bottom: 2rem;
+        }
+        .demo-info h3 {
+            margin: 0 0 0.5rem 0;
+            color: #1976d2;
+        }
+        .demo-info p {
+            margin: 0;
+            color: #333;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🚀 TUS Upload Demo</h1>
+        <p class="subtitle">Resumable file uploads using the TUS protocol</p>
+        
+        <div class="demo-info">
+            <h3>Demo Information</h3>
+            <p>This demo showcases TUS (Tus Resumable Upload Protocol) with server-side hooks, progress tracking, and metadata handling.</p>
+        </div>
+
+        <div class="upload-area" id="uploadArea">
+            <div class="upload-text">
+                🔄 Drop files here or <strong>click to select</strong>
+            </div>
+            <p style="margin: 0; color: #999; font-size: 0.9rem;">
+                Supports resumable uploads up to 100MB
+            </p>
+            <input type="file" id="fileInput" class="file-input" multiple>
+        </div>
+
+        <div class="metadata-section">
+            <h3>📋 Upload Metadata</h3>
+            <div class="metadata-grid">
+                <div class="metadata-field">
+                    <label for="category">Category</label>
+                    <input type="text" id="category" placeholder="documents, images, etc." value="demo">
+                </div>
+                <div class="metadata-field">
+                    <label for="author">Author</label>
+                    <input type="text" id="author" placeholder="Your name" value="TUS Demo">
+                </div>
+                <div class="metadata-field">
+                    <label for="tags">Tags</label>
+                    <input type="text" id="tags" placeholder="comma, separated, tags" value="demo,tus,upload">
+                </div>
+                <div class="metadata-field">
+                    <label for="description">Description</label>
+                    <input type="text" id="description" placeholder="File description" value="Demo upload from web interface">
+                </div>
+            </div>
+        </div>
+
+        <div class="file-info" id="fileInfo">
+            <h3>📁 Selected File</h3>
+            <p><strong>Name:</strong> <span id="fileName"></span></p>
+            <p><strong>Size:</strong> <span id="fileSize"></span></p>
+            <p><strong>Type:</strong> <span id="fileType"></span></p>
+        </div>
+
+        <div class="progress-container" id="progressContainer">
+            <div class="progress-bar">
+                <div class="progress-fill" id="progressFill"></div>
+            </div>
+            <div class="progress-text">
+                <span id="progressPercent">0%</span>
+                <span id="progressSpeed">-</span>
+            </div>
+        </div>
+
+        <button class="btn" id="uploadBtn" disabled>📤 Upload File</button>
+
+        <div class="upload-result" id="uploadResult">
+            <h3>✅ Upload Successful!</h3>
+            <p><strong>Upload URL:</strong> <span id="uploadUrl"></span></p>
+            <p><strong>Duration:</strong> <span id="uploadDuration"></span></p>
+            <p><strong>Average Speed:</strong> <span id="uploadSpeed"></span></p>
+        </div>
+
+        <div class="error-message" id="errorMessage">
+            <h3>❌ Upload Failed</h3>
+            <p id="errorText"></p>
+        </div>
+    </div>
+
+    <script src="https://unpkg.com/tus-js-client@latest/dist/tus.js"></script>
+    <script>
+        // TUS endpoint
+        const TUS_ENDPOINT = '/files/';
+        
+        // DOM elements
+        const uploadArea = document.getElementById('uploadArea');
+        const fileInput = document.getElementById('fileInput');
+        const fileInfo = document.getElementById('fileInfo');
+        const uploadBtn = document.getElementById('uploadBtn');
+        const progressContainer = document.getElementById('progressContainer');
+        const progressFill = document.getElementById('progressFill');
+        const progressPercent = document.getElementById('progressPercent');
+        const progressSpeed = document.getElementById('progressSpeed');
+        const uploadResult = document.getElementById('uploadResult');
+        const errorMessage = document.getElementById('errorMessage');
+        
+        // File and upload state
+        let selectedFile = null;
+        let currentUpload = null;
+        let startTime = null;
+        
+        // Upload area interactions
+        uploadArea.addEventListener('click', () => fileInput.click());
+        uploadArea.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            uploadArea.classList.add('dragover');
+        });
+        uploadArea.addEventListener('dragleave', () => {
+            uploadArea.classList.remove('dragover');
+        });
+        uploadArea.addEventListener('drop', (e) => {
+            e.preventDefault();
+            uploadArea.classList.remove('dragover');
+            if (e.dataTransfer.files.length > 0) {
+                handleFileSelection(e.dataTransfer.files[0]);
+            }
+        });
+        
+        // File input change
+        fileInput.addEventListener('change', (e) => {
+            if (e.target.files.length > 0) {
+                handleFileSelection(e.target.files[0]);
+            }
+        });
+        
+        // Upload button click
+        uploadBtn.addEventListener('click', startUpload);
+        
+        function handleFileSelection(file) {
+            selectedFile = file;
+            
+            // Show file info
+            document.getElementById('fileName').textContent = file.name;
+            document.getElementById('fileSize').textContent = formatBytes(file.size);
+            document.getElementById('fileType').textContent = file.type || 'unknown';
+            fileInfo.style.display = 'block';
+            
+            // Enable upload button
+            uploadBtn.disabled = false;
+            
+            // Hide previous results
+            uploadResult.style.display = 'none';
+            errorMessage.style.display = 'none';
+            progressContainer.style.display = 'none';
+        }
+        
+        function startUpload() {
+            if (!selectedFile) return;
+            
+            // Reset UI
+            uploadResult.style.display = 'none';
+            errorMessage.style.display = 'none';
+            progressContainer.style.display = 'block';
+            uploadBtn.disabled = true;
+            startTime = Date.now();
+            
+            // Collect metadata
+            const metadata = {
+                filename: selectedFile.name,
+                filetype: selectedFile.type || 'application/octet-stream',
+                category: document.getElementById('category').value || 'demo',
+                author: document.getElementById('author').value || 'Anonymous',
+                tags: document.getElementById('tags').value || '',
+                description: document.getElementById('description').value || '',
+                upload_source: 'web_demo',
+                user_agent: navigator.userAgent
+            };
+            
+            // Create TUS upload
+            currentUpload = new tus.Upload(selectedFile, {
+                endpoint: TUS_ENDPOINT,
+                metadata: metadata,
+                retryDelays: [0, 1000, 3000, 5000],
+                chunkSize: 1024 * 1024, // 1MB chunks
+                
+                onError: function(error) {
+                    console.error('Upload failed:', error);
+                    showError(error.message);
+                    uploadBtn.disabled = false;
+                },
+                
+                onProgress: function(bytesUploaded, bytesTotal) {
+                    const percentage = (bytesUploaded / bytesTotal * 100).toFixed(1);
+                    const elapsed = (Date.now() - startTime) / 1000;
+                    const speed = bytesUploaded / elapsed;
+                    
+                    progressFill.style.width = percentage + '%';
+                    progressPercent.textContent = percentage + '%';
+                    progressSpeed.textContent = formatBytes(speed) + '/s';
+                },
+                
+                onSuccess: function() {
+                    const duration = (Date.now() - startTime) / 1000;
+                    const avgSpeed = selectedFile.size / duration;
+                    
+                    console.log('Upload completed:', currentUpload.url);
+                    
+                    // Show success
+                    document.getElementById('uploadUrl').textContent = currentUpload.url;
+                    document.getElementById('uploadDuration').textContent = duration.toFixed(1) + 's';
+                    document.getElementById('uploadSpeed').textContent = formatBytes(avgSpeed) + '/s';
+                    uploadResult.style.display = 'block';
+                    
+                    // Reset
+                    uploadBtn.disabled = false;
+                    uploadBtn.textContent = '📤 Upload Another File';
+                    progressContainer.style.display = 'none';
+                }
+            });
+            
+            // Start the upload
+            currentUpload.start();
+        }
+        
+        function showError(message) {
+            document.getElementById('errorText').textContent = message;
+            errorMessage.style.display = 'block';
+            progressContainer.style.display = 'none';
+        }
+        
+        function formatBytes(bytes) {
+            if (bytes === 0) return '0 B';
+            const k = 1024;
+            const sizes = ['B', 'KB', 'MB', 'GB'];
+            const i = Math.floor(Math.log(bytes) / Math.log(k));
+            return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
+        }
+    </script>
+</body>
+</html>

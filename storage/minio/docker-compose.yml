@@ -1,0 +1,87 @@
+version: '3.8'
+
+services:
+  minio:
+    image: minio/minio:latest
+    container_name: minio-standalone
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - minio-data:/data
+    environment:
+      - MINIO_ROOT_USER=minioadmin
+      - MINIO_ROOT_PASSWORD=minioadmin
+      - MINIO_REGION=us-east-1
+    command: server /data --console-address ":9001"
+    networks:
+      - minio-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      timeout: 20s
+      retries: 3
+
+  minio-setup:
+    image: minio/mc:latest
+    container_name: minio-setup
+    depends_on:
+      - minio
+    networks:
+      - minio-network
+    entrypoint: >
+      /bin/sh -c "
+      echo 'Waiting for Minio to start...';
+      sleep 15;
+      echo 'Configuring Minio...';
+      /usr/bin/mc config host add myminio http://minio:9000 minioadmin minioadmin;
+      echo 'Creating buckets...';
+      /usr/bin/mc mb myminio/tus-uploads || echo 'Bucket tus-uploads already exists';
+      /usr/bin/mc mb myminio/processed-files || echo 'Bucket processed-files already exists';
+      /usr/bin/mc mb myminio/backup || echo 'Bucket backup already exists';
+      echo 'Setting bucket policies...';
+      /usr/bin/mc policy set download myminio/tus-uploads;
+      /usr/bin/mc policy set download myminio/processed-files;
+      echo 'Setting up lifecycle rules...';
+      cat > /tmp/lifecycle.json << 'EOF'
+      {
+          \"Rules\": [
+              {
+                  \"ID\": \"DeleteOldUploads\",
+                  \"Status\": \"Enabled\",
+                  \"Filter\": {
+                      \"Prefix\": \"uploads/\"
+                  },
+                  \"Expiration\": {
+                      \"Days\": 30
+                  }
+              },
+              {
+                  \"ID\": \"ArchiveProcessedFiles\",
+                  \"Status\": \"Enabled\",
+                  \"Filter\": {
+                      \"Prefix\": \"processed/\"
+                  },
+                  \"Transitions\": [
+                      {
+                          \"Days\": 7,
+                          \"StorageClass\": \"GLACIER\"
+                      }
+                  ]
+              }
+          ]
+      }
+      EOF
+      /usr/bin/mc lifecycle set /tmp/lifecycle.json myminio/tus-uploads || echo 'Failed to set lifecycle rules';
+      echo 'Minio setup completed successfully!';
+      echo 'Access Minio Console at: http://localhost:9001';
+      echo 'Username: minioadmin';
+      echo 'Password: minioadmin';
+      "
+
+volumes:
+  minio-data:
+
+networks:
+  minio-network:
+    driver: bridge

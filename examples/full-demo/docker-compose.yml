@@ -1,0 +1,115 @@
+version: '3.8'
+
+services:
+  # TUS Server with hooks
+  tusd:
+    image: tusproject/tusd:latest
+    container_name: tus-server-demo
+    ports:
+      - "1080:1080"
+    volumes:
+      - ../../server/hooks:/srv/tusd-hooks:ro
+      - tus-data:/srv/tusd-data
+    environment:
+      - TUS_HOOKS_DIR=/srv/tusd-hooks
+    command: >
+      -hooks-dir=/srv/tusd-hooks
+      -hooks-enabled-events=pre-create,post-create,pre-finish,post-finish
+      -behind-proxy
+      -host=0.0.0.0
+      -port=1080
+      -upload-dir=/srv/tusd-data
+      -max-size=104857600
+      -respect-forwarded-headers
+      -s3-endpoint=http://minio:9000
+      -s3-bucket=tus-uploads
+      -s3-object-prefix=uploads/
+      -verbose
+    depends_on:
+      - minio-setup
+    networks:
+      - tus-demo-network
+    restart: unless-stopped
+
+  # Minio S3 Storage
+  minio:
+    image: minio/minio:latest
+    container_name: minio-demo
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - minio-data:/data
+    environment:
+      - MINIO_ROOT_USER=minioadmin
+      - MINIO_ROOT_PASSWORD=minioadmin
+      - MINIO_REGION=us-east-1
+    command: server /data --console-address ":9001"
+    networks:
+      - tus-demo-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      timeout: 20s
+      retries: 3
+
+  # Minio Setup
+  minio-setup:
+    image: minio/mc:latest
+    container_name: minio-setup-demo
+    depends_on:
+      - minio
+    networks:
+      - tus-demo-network
+    entrypoint: >
+      /bin/sh -c "
+      echo 'Setting up Minio for TUS demo...';
+      sleep 15;
+      /usr/bin/mc config host add myminio http://minio:9000 minioadmin minioadmin;
+      /usr/bin/mc mb myminio/tus-uploads || true;
+      /usr/bin/mc policy set public myminio/tus-uploads || true;
+      echo 'Minio setup completed for TUS demo!';
+      "
+
+  # Demo Web Interface (optional)
+  demo-web:
+    image: nginx:alpine
+    container_name: tus-demo-web
+    ports:
+      - "8080:80"
+    volumes:
+      - ./web:/usr/share/nginx/html:ro
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      - tusd
+    networks:
+      - tus-demo-network
+    restart: unless-stopped
+
+  # Log aggregator for debugging
+  fluentd:
+    image: fluentd:latest
+    container_name: tus-demo-logs
+    volumes:
+      - ./fluentd:/fluentd/etc:ro
+      - tus-logs:/fluentd/log
+    ports:
+      - "24224:24224"
+    networks:
+      - tus-demo-network
+    restart: unless-stopped
+
+volumes:
+  tus-data:
+    driver: local
+  minio-data:
+    driver: local
+  tus-logs:
+    driver: local
+
+networks:
+  tus-demo-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16

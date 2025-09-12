@@ -1,0 +1,82 @@
+{
+  "aliyun_oss_config": {
+    "endpoint": "https://oss-{region}.aliyuncs.com",
+    "region": "us-east-1",
+    "access_key_id": "YOUR_ACCESS_KEY_ID",
+    "access_key_secret": "YOUR_ACCESS_KEY_SECRET",
+    "bucket": "your-tus-uploads-bucket",
+    "object_prefix": "uploads/",
+    "security_token": "",
+    "use_cname": false,
+    "use_https": true,
+    "connect_timeout": 30,
+    "read_write_timeout": 60
+  },
+  "upload_settings": {
+    "max_file_size": 104857600,
+    "allowed_extensions": [
+      ".jpg", ".jpeg", ".png", ".gif", ".bmp",
+      ".pdf", ".doc", ".docx", ".txt", ".rtf",
+      ".zip", ".tar", ".gz", ".7z", ".rar",
+      ".mp4", ".avi", ".mov", ".wmv", ".flv",
+      ".mp3", ".wav", ".flac", ".aac",
+      ".json", ".xml", ".csv", ".xlsx"
+    ],
+    "chunk_size": 4194304,
+    "multipart_threshold": 20971520,
+    "max_concurrent_uploads": 3
+  },
+  "storage_policies": {
+    "images": {
+      "bucket": "your-images-bucket",
+      "prefix": "images/",
+      "storage_class": "Standard",
+      "lifecycle_days": 365
+    },
+    "documents": {
+      "bucket": "your-documents-bucket", 
+      "prefix": "documents/",
+      "storage_class": "Standard",
+      "lifecycle_days": 2555
+    },
+    "videos": {
+      "bucket": "your-videos-bucket",
+      "prefix": "videos/",
+      "storage_class": "IA",
+      "lifecycle_days": 90
+    },
+    "archives": {
+      "bucket": "your-archives-bucket",
+      "prefix": "archives/",
+      "storage_class": "Archive",
+      "lifecycle_days": 30
+    }
+  },
+  "security": {
+    "enable_https": true,
+    "verify_ssl": true,
+    "cors_enabled": true,
+    "cors_allowed_origins": ["*"],
+    "cors_allowed_methods": ["GET", "POST", "PUT", "DELETE", "HEAD", "PATCH"],
+    "cors_allowed_headers": ["*"],
+    "cors_max_age": 3600
+  },
+  "monitoring": {
+    "enable_logging": true,
+    "log_level": "INFO",
+    "metrics_enabled": true,
+    "health_check_interval": 60,
+    "error_notification": {
+      "enabled": false,
+      "webhook_url": "",
+      "email_address": ""
+    }
+  },
+  "backup": {
+    "enabled": true,
+    "backup_bucket": "your-backup-bucket",
+    "backup_prefix": "backups/",
+    "retention_days": 30,
+    "schedule": "daily"
+  }
+}

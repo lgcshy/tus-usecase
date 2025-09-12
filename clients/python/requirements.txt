@@ -1,0 +1,4 @@
+tuspy==1.0.0
+requests>=2.25.0
+tqdm>=4.60.0
+python-magic>=0.4.24
