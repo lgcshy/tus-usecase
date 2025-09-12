@@ -13,13 +13,11 @@ import (
 	"strings"
 	"sync"
 	"time"
-
-	"github.com/tus/tus-go-client"
 )
 
-// TUSClient wraps the tus-go-client with additional functionality
+// TUSClient provides a simple TUS client implementation
 type TUSClient struct {
-	client    *tus.Client
+	client    *http.Client
 	endpoint  string
 	chunkSize int64
 	timeout   time.Duration
@@ -102,20 +100,11 @@ func (p *UploadProgress) GetStats() (percent float64, speed float64, eta time.Du
 
 // NewTUSClient creates a new TUS client
 func NewTUSClient(endpoint string) (*TUSClient, error) {
-	tusConfig := tus.DefaultConfig()
-	tusConfig.Resume = true
-	tusConfig.HttpClient = &http.Client{
-		Timeout: 30 * time.Second,
-	}
-	
-	client, err := tus.NewClient(endpoint, tusConfig)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create TUS client: %w", err)
-	}
-	
 	return &TUSClient{
-		client:    client,
-		endpoint:  endpoint,
+		client: &http.Client{
+			Timeout: 30 * time.Second,
+		},
+		endpoint:  strings.TrimSuffix(endpoint, "/"),
 		chunkSize: 4 * 1024 * 1024, // 4MB default
 		timeout:   30 * time.Second,
 	}, nil
@@ -142,7 +131,7 @@ func (c *TUSClient) UploadFile(ctx context.Context, filePath string, options Upl
 	filename := filepath.Base(filePath)
 	
 	// Calculate checksum
-	checksum, err := calculateFileChecksum(filePath)
+	checksum, err := c.calculateFileChecksum(filePath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to calculate checksum: %w", err)
 	}
@@ -158,36 +147,6 @@ func (c *TUSClient) UploadFile(ctx context.Context, filePath string, options Upl
 	metadata["size"] = strconv.FormatInt(fileSize, 10)
 	metadata["sha256"] = checksum
 	
-	// Setup progress tracking
-	var progress *UploadProgress
-	if options.ProgressCallback != nil {
-		progress = NewUploadProgress(fileSize, options.ProgressCallback)
-	}
-	
-	// Create upload
-	uploader, err := c.client.CreateUpload(&tus.Upload{
-		Stream:   file,
-		Size:     fileSize,
-		Metadata: metadata,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("failed to create upload: %w", err)
-	}
-	
-	// Configure uploader
-	if options.ChunkSize > 0 {
-		uploader.ChunkSize = options.ChunkSize
-	} else {
-		uploader.ChunkSize = c.chunkSize
-	}
-	
-	// Setup progress callback for the uploader
-	if progress != nil {
-		uploader.NotifyUploadProgress = func(bytesUploaded, bytesTotal int64) {
-			progress.Update(bytesUploaded)
-		}
-	}
-	
 	// Use context if provided
 	if options.Context != nil {
 		ctx = options.Context
@@ -196,21 +155,22 @@ func (c *TUSClient) UploadFile(ctx context.Context, filePath string, options Upl
 		ctx = context.Background()
 	}
 	
-	// Perform upload
-	err = uploader.Upload(ctx)
+	// Create upload
+	uploadURL, err := c.createUpload(ctx, fileSize, metadata)
 	if err != nil {
-		return nil, fmt.Errorf("upload failed: %w", err)
+		return nil, fmt.Errorf("failed to create upload: %w", err)
 	}
 	
-	// Final progress update
-	if progress != nil {
-		progress.Update(fileSize)
+	// Upload file
+	err = c.uploadData(ctx, uploadURL, file, fileSize, options.ProgressCallback)
+	if err != nil {
+		return nil, fmt.Errorf("upload failed: %w", err)
 	}
 	
 	duration := time.Since(startTime)
 	
 	return &UploadResult{
-		URL:      uploader.Url(),
+		URL:      uploadURL,
 		Size:     fileSize,
 		Metadata: metadata,
 		Checksum: checksum,
@@ -243,39 +203,6 @@ func (c *TUSClient) UploadBytes(ctx context.Context, data []byte, filename strin
 	metadata["size"] = strconv.FormatInt(dataSize, 10)
 	metadata["sha256"] = checksum
 	
-	// Setup progress tracking
-	var progress *UploadProgress
-	if options.ProgressCallback != nil {
-		progress = NewUploadProgress(dataSize, options.ProgressCallback)
-	}
-	
-	// Create reader from bytes
-	reader := strings.NewReader(string(data))
-	
-	// Create upload
-	uploader, err := c.client.CreateUpload(&tus.Upload{
-		Stream:   reader,
-		Size:     dataSize,
-		Metadata: metadata,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("failed to create upload: %w", err)
-	}
-	
-	// Configure uploader
-	if options.ChunkSize > 0 {
-		uploader.ChunkSize = options.ChunkSize
-	} else {
-		uploader.ChunkSize = c.chunkSize
-	}
-	
-	// Setup progress callback
-	if progress != nil {
-		uploader.NotifyUploadProgress = func(bytesUploaded, bytesTotal int64) {
-			progress.Update(bytesUploaded)
-		}
-	}
-	
 	// Use context if provided
 	if options.Context != nil {
 		ctx = options.Context
@@ -284,21 +211,23 @@ func (c *TUSClient) UploadBytes(ctx context.Context, data []byte, filename strin
 		ctx = context.Background()
 	}
 	
-	// Perform upload
-	err = uploader.Upload(ctx)
+	// Create upload
+	uploadURL, err := c.createUpload(ctx, dataSize, metadata)
 	if err != nil {
-		return nil, fmt.Errorf("upload failed: %w", err)
+		return nil, fmt.Errorf("failed to create upload: %w", err)
 	}
 	
-	// Final progress update
-	if progress != nil {
-		progress.Update(dataSize)
+	// Upload data
+	reader := strings.NewReader(string(data))
+	err = c.uploadData(ctx, uploadURL, reader, dataSize, options.ProgressCallback)
+	if err != nil {
+		return nil, fmt.Errorf("upload failed: %w", err)
 	}
 	
 	duration := time.Since(startTime)
 	
 	return &UploadResult{
-		URL:      uploader.Url(),
+		URL:      uploadURL,
 		Size:     dataSize,
 		Metadata: metadata,
 		Checksum: checksum,
@@ -306,87 +235,8 @@ func (c *TUSClient) UploadBytes(ctx context.Context, data []byte, filename strin
 	}, nil
 }
 
-// ResumeUpload resumes an existing upload
-func (c *TUSClient) ResumeUpload(ctx context.Context, uploadURL, filePath string, options UploadOptions) (*UploadResult, error) {
-	startTime := time.Now()
-	
-	// Open file
-	file, err := os.Open(filePath)
-	if err != nil {
-		return nil, fmt.Errorf("failed to open file: %w", err)
-	}
-	defer file.Close()
-	
-	// Get file info
-	fileInfo, err := file.Stat()
-	if err != nil {
-		return nil, fmt.Errorf("failed to get file info: %w", err)
-	}
-	
-	fileSize := fileInfo.Size()
-	
-	// Parse upload URL
-	parsedURL, err := url.Parse(uploadURL)
-	if err != nil {
-		return nil, fmt.Errorf("invalid upload URL: %w", err)
-	}
-	
-	// Create uploader for existing upload
-	uploader := &tus.Uploader{
-		Client: c.client,
-		URL:    parsedURL,
-		Upload: &tus.Upload{
-			Stream: file,
-			Size:   fileSize,
-		},
-	}
-	
-	// Configure uploader
-	if options.ChunkSize > 0 {
-		uploader.ChunkSize = options.ChunkSize
-	} else {
-		uploader.ChunkSize = c.chunkSize
-	}
-	
-	// Setup progress tracking
-	if options.ProgressCallback != nil {
-		progress := NewUploadProgress(fileSize, options.ProgressCallback)
-		uploader.NotifyUploadProgress = func(bytesUploaded, bytesTotal int64) {
-			progress.Update(bytesUploaded)
-		}
-	}
-	
-	// Use context if provided
-	if options.Context != nil {
-		ctx = options.Context
-	}
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	
-	// Resume upload
-	err = uploader.Upload(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("resume upload failed: %w", err)
-	}
-	
-	duration := time.Since(startTime)
-	
-	return &UploadResult{
-		URL:      uploadURL,
-		Size:     fileSize,
-		Metadata: nil, // Would need to fetch from server
-		Checksum: "", // Would need to calculate
-		Duration: duration,
-	}, nil
-}
-
 // GetUploadInfo gets information about an existing upload
 func (c *TUSClient) GetUploadInfo(ctx context.Context, uploadURL string) (map[string]interface{}, error) {
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	
 	req, err := http.NewRequestWithContext(ctx, "HEAD", uploadURL, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
@@ -394,7 +244,7 @@ func (c *TUSClient) GetUploadInfo(ctx context.Context, uploadURL string) (map[st
 	
 	req.Header.Set("Tus-Resumable", "1.0.0")
 	
-	resp, err := c.client.HttpClient.Do(req)
+	resp, err := c.client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get upload info: %w", err)
 	}
@@ -439,26 +289,108 @@ func (c *TUSClient) GetUploadInfo(ctx context.Context, uploadURL string) (map[st
 	return info, nil
 }
 
-// DeleteUpload deletes an existing upload
-func (c *TUSClient) DeleteUpload(ctx context.Context, uploadURL string) error {
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	
-	req, err := http.NewRequestWithContext(ctx, "DELETE", uploadURL, nil)
+// createUpload creates a new upload and returns the upload URL
+func (c *TUSClient) createUpload(ctx context.Context, size int64, metadata map[string]string) (string, error) {
+	req, err := http.NewRequestWithContext(ctx, "POST", c.endpoint, nil)
 	if err != nil {
-		return fmt.Errorf("failed to create request: %w", err)
+		return "", err
 	}
 	
 	req.Header.Set("Tus-Resumable", "1.0.0")
+	req.Header.Set("Upload-Length", strconv.FormatInt(size, 10))
+	req.Header.Set("Content-Type", "application/offset+octet-stream")
 	
-	resp, err := c.client.HttpClient.Do(req)
+	// Encode metadata
+	if len(metadata) > 0 {
+		var metaPairs []string
+		for key, value := range metadata {
+			encodedValue := fmt.Sprintf("%x", []byte(value))
+			metaPairs = append(metaPairs, fmt.Sprintf("%s %s", key, encodedValue))
+		}
+		req.Header.Set("Upload-Metadata", strings.Join(metaPairs, ","))
+	}
+	
+	resp, err := c.client.Do(req)
 	if err != nil {
-		return fmt.Errorf("failed to delete upload: %w", err)
+		return "", err
 	}
 	defer resp.Body.Close()
 	
-	if resp.StatusCode != http.StatusNoContent && resp.StatusCode != http.StatusNotFound {
+	if resp.StatusCode != http.StatusCreated {
+		return "", fmt.Errorf("server returned status %d", resp.StatusCode)
+	}
+	
+	location := resp.Header.Get("Location")
+	if location == "" {
+		return "", fmt.Errorf("server did not return upload URL")
+	}
+	
+	// Handle relative URLs
+	if strings.HasPrefix(location, "/") {
+		parsedEndpoint, _ := url.Parse(c.endpoint)
+		location = parsedEndpoint.Scheme + "://" + parsedEndpoint.Host + location
+	}
+	
+	return location, nil
+}
+
+// uploadData uploads data to the given upload URL
+func (c *TUSClient) uploadData(ctx context.Context, uploadURL string, reader io.Reader, totalSize int64, progressCallback func(int64, int64)) error {
+	chunkSize := c.chunkSize
+	buffer := make([]byte, chunkSize)
+	var offset int64 = 0
+	
+	for offset < totalSize {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+		
+		// Read chunk
+		n, err := reader.Read(buffer)
+		if err != nil && err != io.EOF {
+			return err
+		}
+		if n == 0 {
+			break
+		}
+		
+		// Upload chunk
+		err = c.uploadChunk(ctx, uploadURL, buffer[:n], offset)
+		if err != nil {
+			return err
+		}
+		
+		offset += int64(n)
+		
+		// Progress callback
+		if progressCallback != nil {
+			progressCallback(offset, totalSize)
+		}
+	}
+	
+	return nil
+}
+
+// uploadChunk uploads a single chunk
+func (c *TUSClient) uploadChunk(ctx context.Context, uploadURL string, chunk []byte, offset int64) error {
+	req, err := http.NewRequestWithContext(ctx, "PATCH", uploadURL, strings.NewReader(string(chunk)))
+	if err != nil {
+		return err
+	}
+	
+	req.Header.Set("Tus-Resumable", "1.0.0")
+	req.Header.Set("Upload-Offset", strconv.FormatInt(offset, 10))
+	req.Header.Set("Content-Type", "application/offset+octet-stream")
+	
+	resp, err := c.client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	
+	if resp.StatusCode != http.StatusNoContent {
 		return fmt.Errorf("server returned status %d", resp.StatusCode)
 	}
 	
@@ -466,7 +398,7 @@ func (c *TUSClient) DeleteUpload(ctx context.Context, uploadURL string) error {
 }
 
 // calculateFileChecksum calculates SHA256 checksum of a file
-func calculateFileChecksum(filePath string) (string, error) {
+func (c *TUSClient) calculateFileChecksum(filePath string) (string, error) {
 	file, err := os.Open(filePath)
 	if err != nil {
 		return "", err
