@@ -1,0 +1,236 @@
+#!/usr/bin/env python3
+"""
+TUS Pre-Finish Hook
+
+This hook is called before an upload is completed. It can be used to:
+- Validate completed uploads
+- Perform file integrity checks
+- Scan for viruses or malware
+- Verify file formats
+- Check business rules before completion
+
+Environment variables available:
+- TUS_ID: Upload ID
+- TUS_SIZE: Upload size in bytes
+- TUS_OFFSET: Current offset (should equal TUS_SIZE for complete uploads)
+- TUS_METADATA: Upload metadata (base64 encoded)
+"""
+
+import os
+import sys
+import json
+import base64
+import logging
+import hashlib
+import datetime
+from typing import Dict, Any, Optional
+
+# Configure logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
+
+def decode_metadata(metadata_b64: str) -> Dict[str, str]:
+    """Decode TUS metadata from base64 format."""
+    try:
+        if not metadata_b64:
+            return {}
+        
+        metadata_str = base64.b64decode(metadata_b64).decode('utf-8')
+        metadata = {}
+        
+        for pair in metadata_str.split(','):
+            if ' ' in pair:
+                key, value = pair.split(' ', 1)
+                try:
+                    metadata[key] = base64.b64decode(value).decode('utf-8')
+                except:
+                    metadata[key] = value
+        
+        return metadata
+    except Exception as e:
+        logger.error(f"Failed to decode metadata: {e}")
+        return {}
+
+def verify_upload_completion(upload_size: int, upload_offset: int) -> tuple[bool, Optional[str]]:
+    """Verify that the upload is actually complete."""
+    if upload_offset != upload_size:
+        return False, f"Upload incomplete: offset {upload_offset} != size {upload_size}"
+    
+    if upload_size <= 0:
+        return False, "Invalid upload size"
+    
+    return True, None
+
+def calculate_file_checksum(file_path: str) -> Optional[str]:
+    """Calculate SHA256 checksum of uploaded file."""
+    try:
+        if not os.path.exists(file_path):
+            return None
+        
+        sha256_hash = hashlib.sha256()
+        with open(file_path, "rb") as f:
+            # Read file in chunks to handle large files
+            for chunk in iter(lambda: f.read(4096), b""):
+                sha256_hash.update(chunk)
+        
+        return sha256_hash.hexdigest()
+    except Exception as e:
+        logger.error(f"Failed to calculate checksum: {e}")
+        return None
+
+def verify_file_integrity(upload_id: str, metadata: Dict[str, str]) -> tuple[bool, Optional[str]]:
+    """Verify file integrity if checksum was provided."""
+    expected_checksum = metadata.get('checksum') or metadata.get('sha256')
+    if not expected_checksum:
+        logger.info("No checksum provided, skipping integrity verification")
+        return True, None
+    
+    # In production, you'd get the actual file path from TUS server configuration
+    # For this demo, we'll simulate the check
+    logger.info(f"Verifying file integrity for upload {upload_id}")
+    
+    # Simulated checksum verification
+    # In real implementation: actual_checksum = calculate_file_checksum(file_path)
+    logger.info(f"Expected checksum: {expected_checksum}")
+    logger.info("File integrity verification passed (simulated)")
+    
+    return True, None
+
+def scan_for_malware(upload_id: str, metadata: Dict[str, str]) -> tuple[bool, Optional[str]]:
+    """Scan uploaded file for malware (placeholder)."""
+    # In production, you might integrate with:
+    # - ClamAV
+    # - VirusTotal API
+    # - Custom security scanners
+    # - Cloud security services (AWS Macie, Azure Defender, etc.)
+    
+    filename = metadata.get('filename', 'unknown')
+    logger.info(f"Scanning {filename} for malware (upload {upload_id})")
+    
+    # Simulate malware scan
+    # Reject files with suspicious names (for demo)
+    suspicious_patterns = ['virus', 'malware', 'trojan', '.exe.txt', 'backdoor']
+    filename_lower = filename.lower()
+    
+    for pattern in suspicious_patterns:
+        if pattern in filename_lower:
+            return False, f"File rejected: suspicious filename pattern '{pattern}' detected"
+    
+    logger.info("Malware scan passed")
+    return True, None
+
+def validate_file_format(metadata: Dict[str, str]) -> tuple[bool, Optional[str]]:
+    """Validate file format against expected format."""
+    filename = metadata.get('filename', '')
+    declared_type = metadata.get('filetype', '')
+    
+    if not filename:
+        return True, None  # Skip if no filename
+    
+    # Basic file extension validation
+    file_ext = os.path.splitext(filename)[1].lower()
+    
+    # Define expected MIME types for extensions
+    ext_mime_map = {
+        '.jpg': 'image/jpeg',
+        '.jpeg': 'image/jpeg', 
+        '.png': 'image/png',
+        '.gif': 'image/gif',
+        '.pdf': 'application/pdf',
+        '.txt': 'text/plain',
+        '.zip': 'application/zip',
+        '.json': 'application/json'
+    }
+    
+    expected_mime = ext_mime_map.get(file_ext)
+    if expected_mime and declared_type and declared_type != expected_mime:
+        return False, f"File type mismatch: extension {file_ext} expects {expected_mime}, got {declared_type}"
+    
+    logger.info(f"File format validation passed for {filename}")
+    return True, None
+
+def update_tracking(upload_id: str, status: str):
+    """Update upload tracking with pre-finish status."""
+    tracking_file = f'/tmp/tus_tracking_{upload_id}.json'
+    
+    try:
+        # Load existing tracking data
+        tracking_data = {}
+        if os.path.exists(tracking_file):
+            with open(tracking_file, 'r') as f:
+                tracking_data = json.load(f)
+        
+        # Update status
+        tracking_data['status'] = status
+        tracking_data['last_activity'] = datetime.datetime.now().isoformat()
+        tracking_data['pre_finish_check'] = datetime.datetime.now().isoformat()
+        
+        # Save updated tracking data
+        with open(tracking_file, 'w') as f:
+            json.dump(tracking_data, f, indent=2)
+        
+        logger.info(f"Tracking updated: {status}")
+    except Exception as e:
+        logger.error(f"Failed to update tracking: {e}")
+
+def main():
+    """Main hook execution."""
+    try:
+        # Get TUS environment variables
+        upload_id = os.environ.get('TUS_ID', '')
+        upload_size = int(os.environ.get('TUS_SIZE', '0'))
+        upload_offset = int(os.environ.get('TUS_OFFSET', '0'))
+        metadata_b64 = os.environ.get('TUS_METADATA', '')
+        
+        # Decode metadata
+        metadata = decode_metadata(metadata_b64)
+        
+        logger.info(f"Pre-finish hook called for upload {upload_id}")
+        logger.info(f"Upload size: {upload_size} bytes, offset: {upload_offset}")
+        logger.info(f"Filename: {metadata.get('filename', 'unknown')}")
+        
+        # Update tracking
+        update_tracking(upload_id, 'validating')
+        
+        # Verify upload completion
+        is_complete, error_msg = verify_upload_completion(upload_size, upload_offset)
+        if not is_complete:
+            logger.error(f"Upload completion check failed: {error_msg}")
+            update_tracking(upload_id, 'validation_failed')
+            sys.exit(1)
+        
+        # Verify file integrity
+        is_valid, error_msg = verify_file_integrity(upload_id, metadata)
+        if not is_valid:
+            logger.error(f"File integrity check failed: {error_msg}")
+            update_tracking(upload_id, 'integrity_failed')
+            sys.exit(1)
+        
+        # Scan for malware
+        is_safe, error_msg = scan_for_malware(upload_id, metadata)
+        if not is_safe:
+            logger.error(f"Malware scan failed: {error_msg}")
+            update_tracking(upload_id, 'security_failed')
+            sys.exit(1)
+        
+        # Validate file format
+        is_format_valid, error_msg = validate_file_format(metadata)
+        if not is_format_valid:
+            logger.error(f"File format validation failed: {error_msg}")
+            update_tracking(upload_id, 'format_failed')
+            sys.exit(1)
+        
+        # All validations passed
+        logger.info(f"All pre-finish validations passed for upload {upload_id}")
+        update_tracking(upload_id, 'validated')
+        
+        # Exit successfully to allow upload completion
+        sys.exit(0)
+        
+    except Exception as e:
+        logger.error(f"Pre-finish hook failed: {e}")
+        update_tracking(upload_id, 'hook_error')
+        sys.exit(1)
+
+if __name__ == "__main__":
+    main()

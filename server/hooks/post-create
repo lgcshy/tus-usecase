@@ -1,0 +1,163 @@
+#!/usr/bin/env python3
+"""
+TUS Post-Create Hook
+
+This hook is called after an upload has been created. It can be used to:
+- Log upload creation events
+- Initialize upload tracking
+- Send notifications
+- Set up monitoring
+- Create database records
+
+Environment variables available:
+- TUS_ID: Upload ID
+- TUS_SIZE: Upload size in bytes
+- TUS_OFFSET: Current offset (usually 0 for post-create)
+- TUS_METADATA: Upload metadata (base64 encoded)
+"""
+
+import os
+import sys
+import json
+import base64
+import logging
+import datetime
+from typing import Dict, Any
+
+# Configure logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
+
+def decode_metadata(metadata_b64: str) -> Dict[str, str]:
+    """Decode TUS metadata from base64 format."""
+    try:
+        if not metadata_b64:
+            return {}
+        
+        metadata_str = base64.b64decode(metadata_b64).decode('utf-8')
+        metadata = {}
+        
+        for pair in metadata_str.split(','):
+            if ' ' in pair:
+                key, value = pair.split(' ', 1)
+                try:
+                    metadata[key] = base64.b64decode(value).decode('utf-8')
+                except:
+                    metadata[key] = value
+        
+        return metadata
+    except Exception as e:
+        logger.error(f"Failed to decode metadata: {e}")
+        return {}
+
+def log_upload_creation(upload_id: str, upload_size: int, metadata: Dict[str, str]):
+    """Log the upload creation event."""
+    timestamp = datetime.datetime.now().isoformat()
+    
+    upload_record = {
+        'event': 'upload_created',
+        'timestamp': timestamp,
+        'upload_id': upload_id,
+        'size': upload_size,
+        'filename': metadata.get('filename', 'unknown'),
+        'filetype': metadata.get('filetype', 'unknown'),
+        'metadata': metadata
+    }
+    
+    # Log to file (in production, you might send to a database or message queue)
+    log_file = '/tmp/tus_uploads.log'
+    try:
+        with open(log_file, 'a') as f:
+            f.write(json.dumps(upload_record) + '\n')
+        logger.info(f"Upload creation logged to {log_file}")
+    except Exception as e:
+        logger.error(f"Failed to log upload creation: {e}")
+
+def send_notification(upload_id: str, metadata: Dict[str, str]):
+    """Send notification about upload creation (placeholder)."""
+    # In a real implementation, you might send notifications via:
+    # - Email
+    # - Slack/Teams webhook
+    # - Message queue (RabbitMQ, Redis, etc.)
+    # - Database events
+    # - Push notifications
+    
+    logger.info(f"Notification: New upload started - {metadata.get('filename', 'unknown')} (ID: {upload_id})")
+    
+    # Example webhook notification (commented out)
+    """
+    import requests
+    webhook_url = os.environ.get('WEBHOOK_URL')
+    if webhook_url:
+        payload = {
+            'event': 'upload_started',
+            'upload_id': upload_id,
+            'filename': metadata.get('filename'),
+            'size': upload_size
+        }
+        try:
+            requests.post(webhook_url, json=payload, timeout=5)
+        except Exception as e:
+            logger.error(f"Failed to send webhook: {e}")
+    """
+
+def initialize_tracking(upload_id: str, upload_size: int, metadata: Dict[str, str]):
+    """Initialize upload progress tracking."""
+    tracking_data = {
+        'upload_id': upload_id,
+        'total_size': upload_size,
+        'current_offset': 0,
+        'progress': 0.0,
+        'status': 'created',
+        'created_at': datetime.datetime.now().isoformat(),
+        'filename': metadata.get('filename', 'unknown'),
+        'chunks_received': 0,
+        'last_activity': datetime.datetime.now().isoformat()
+    }
+    
+    # Store tracking data (in production, use a database or cache)
+    tracking_file = f'/tmp/tus_tracking_{upload_id}.json'
+    try:
+        with open(tracking_file, 'w') as f:
+            json.dump(tracking_data, f, indent=2)
+        logger.info(f"Upload tracking initialized: {tracking_file}")
+    except Exception as e:
+        logger.error(f"Failed to initialize tracking: {e}")
+
+def main():
+    """Main hook execution."""
+    try:
+        # Get TUS environment variables
+        upload_id = os.environ.get('TUS_ID', '')
+        upload_size = int(os.environ.get('TUS_SIZE', '0'))
+        upload_offset = int(os.environ.get('TUS_OFFSET', '0'))
+        metadata_b64 = os.environ.get('TUS_METADATA', '')
+        
+        # Decode metadata
+        metadata = decode_metadata(metadata_b64)
+        
+        logger.info(f"Post-create hook called for upload {upload_id}")
+        logger.info(f"Upload size: {upload_size} bytes")
+        logger.info(f"Filename: {metadata.get('filename', 'unknown')}")
+        
+        # Log upload creation
+        log_upload_creation(upload_id, upload_size, metadata)
+        
+        # Send notification
+        send_notification(upload_id, metadata)
+        
+        # Initialize progress tracking
+        initialize_tracking(upload_id, upload_size, metadata)
+        
+        logger.info(f"Post-create hook completed successfully for upload {upload_id}")
+        
+        # Exit successfully
+        sys.exit(0)
+        
+    except Exception as e:
+        logger.error(f"Post-create hook failed: {e}")
+        # Don't fail the upload for logging/notification errors
+        sys.exit(0)
+
+if __name__ == "__main__":
+    main()

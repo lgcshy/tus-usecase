@@ -1,0 +1,74 @@
+version: '3.8'
+
+services:
+  tusd:
+    image: tusproject/tusd:latest
+    container_name: tus-server
+    ports:
+      - "1080:1080"
+    volumes:
+      - ./hooks:/srv/tusd-hooks:ro
+      - ./config:/srv/tusd-config:ro
+      - tus-data:/srv/tusd-data
+    environment:
+      - TUS_HOOKS_DIR=/srv/tusd-hooks
+      - TUS_HOOKS_HTTP_RETRY=3
+      - TUS_HOOKS_HTTP_BACKOFF=1
+    command: >
+      -hooks-dir=/srv/tusd-hooks
+      -hooks-http-retry=3
+      -hooks-http-backoff=1
+      -behind-proxy
+      -host=0.0.0.0
+      -port=1080
+      -upload-dir=/srv/tusd-data
+      -max-size=104857600
+      -respect-forwarded-headers
+      -hooks-enabled-events=pre-create,post-create,pre-finish,post-finish
+      -s3-endpoint=http://minio:9000
+      -s3-bucket=tus-uploads
+      -s3-object-prefix=uploads/
+    depends_on:
+      - minio
+    networks:
+      - tus-network
+
+  minio:
+    image: minio/minio:latest
+    container_name: minio
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - minio-data:/data
+    environment:
+      - MINIO_ROOT_USER=minioadmin
+      - MINIO_ROOT_PASSWORD=minioadmin
+    command: server /data --console-address ":9001"
+    networks:
+      - tus-network
+
+  minio-setup:
+    image: minio/mc:latest
+    container_name: minio-setup
+    depends_on:
+      - minio
+    networks:
+      - tus-network
+    entrypoint: >
+      /bin/sh -c "
+      echo 'Waiting for Minio to start...';
+      sleep 10;
+      /usr/bin/mc config host add myminio http://minio:9000 minioadmin minioadmin;
+      /usr/bin/mc mb myminio/tus-uploads || true;
+      /usr/bin/mc policy set public myminio/tus-uploads || true;
+      echo 'Minio setup completed';
+      "
+
+volumes:
+  tus-data:
+  minio-data:
+
+networks:
+  tus-network:
+    driver: bridge
