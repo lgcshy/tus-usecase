@@ -1,0 +1,134 @@
+services:
+  minio:
+    image: minio/minio:latest
+    container_name: tus-minio
+    networks:
+      - tusdx
+    ports:
+      - "19000:9000"   # API端口
+      - "19001:9001"   # Console端口
+    environment:
+      MINIO_ROOT_USER: minio@minio
+      MINIO_ROOT_PASSWORD: minio@minio
+      MINIO_REGION: cn-west-1
+    command: server /data --console-address ":9001" --address ":9000"
+    volumes:
+      - ./minio/data:/data
+      - ./minio/config:/root/.minio
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      timeout: 20s
+      retries: 3
+
+  # Python TUS Hook Service
+  # tus-hook-service:
+  #   build:
+  #     context: .
+  #     dockerfile: Dockerfile
+  #   container_name: tus-hook-service
+  #   networks:
+  #     - tusdx
+  #   ports:
+  #     - "8324:8000"   # Hook服务端口
+  #   environment:
+  #     # 应用配置
+  #     TUS_APP_NAME: "TUS Hook Service"
+  #     TUS_DEBUG: "false"
+  #     TUS_HOST: "0.0.0.0"
+  #     TUS_PORT: "8000"
+  #     TUS_LOG_LEVEL: "INFO"
+  #     TUS_LOG_FORMAT: "json"
+      
+  #     # MinIO配置
+  #     TUS_MINIO_ENDPOINT: "minio:9000"
+  #     TUS_MINIO_ACCESS_KEY: "minio@minio"
+  #     TUS_MINIO_SECRET_KEY: "minio@minio"
+  #     TUS_MINIO_SECURE: "false"
+  #     TUS_MINIO_BUCKET: "oss"
+      
+  #     # 文件上传限制
+  #     TUS_MAX_FILE_SIZE: "4294967296"  # 4GB
+  #     TUS_MAX_FILE_SIZE_READABLE: "4GB"
+      
+  #     # 功能开关
+  #     TUS_ENABLE_MIME_DETECTION: "true"
+  #     TUS_ENABLE_METADATA_UPDATE: "true"
+      
+  #     # 性能配置
+  #     TUS_LARGE_FILE_THRESHOLD: "1073741824"      # 1GB
+  #     TUS_VERY_LARGE_FILE_THRESHOLD: "5368709120" # 5GB
+  #   depends_on:
+  #     - minio
+  #   healthcheck:
+  #     test: ["CMD", "curl", "-f", "http://localhost:8000/api/v1/health"]
+  #     interval: 30s
+  #     timeout: 10s
+  #     retries: 3
+  #   restart: unless-stopped
+
+  # TUS文件上传服务
+  tusd:
+    image: tusproject/tusd:v2.8.0
+    container_name: tus-server
+    networks:
+      - tusdx
+    ports:
+      - "9508:8080"
+    environment:
+      AWS_ACCESS_KEY_ID: minio@minio
+      AWS_SECRET_ACCESS_KEY: minio@minio
+      AWS_REGION: cn-west-1
+    # 修改webhook地址指向Python服务
+    command: >
+      -s3-bucket oss 
+      -s3-endpoint http://minio:9000 
+      -s3-disable-ssl 
+      -hooks-http http://host.docker.internal:8000/api/v1/webhook 
+      -hooks-http-retry 3 
+      -hooks-http-backoff 3s 
+      -verbose
+    depends_on:
+      - minio
+    restart: unless-stopped
+
+  # Nginx前端服务
+  frontend:
+    image: nginx:latest
+    container_name: tus-frontend
+    networks:
+      - tusdx
+    ports:
+      - "9908:80"
+    volumes:
+      - "./public/:/usr/share/nginx/html"
+    depends_on:
+      - tusd
+    restart: unless-stopped
+
+  # MinIO Client (用于初始化bucket等管理任务)
+  mc:
+    image: minio/mc:latest
+    container_name: tus-mc
+    networks:
+      - tusdx
+    depends_on:
+      - minio
+    entrypoint: >
+      /bin/sh -c "
+      /usr/bin/mc alias set myminio http://minio:9000 minio@minio minio@minio;
+      /usr/bin/mc mb myminio/oss --ignore-existing;
+      /usr/bin/mc policy set public myminio/oss;
+      echo 'MinIO bucket initialized successfully';
+      exit 0;
+      "
+    restart: "no"
+
+networks:
+  tusdx:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.65.0.0/16
+          gateway: 172.65.0.1
+

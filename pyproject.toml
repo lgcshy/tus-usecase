@@ -1,0 +1,14 @@
+[project]
+name = "tus-hook-service"
+version = "0.1.0"
+description = "A TUS Hook Service"
+readme = "README.md"
+requires-python = ">=3.12.9"
+dependencies = [
+    "fastapi[standard]>=0.116.1",
+    "loguru>=0.7.3",
+    "minio>=7.2.16",
+    "pydantic>=2.11.8",
+    "pydantic-settings>=2.10.1",
+    "typeid-python>=0.3.2",
+]
