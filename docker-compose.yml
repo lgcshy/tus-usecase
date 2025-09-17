@@ -11,6 +11,7 @@ services:
       MINIO_ROOT_USER: minio@minio
       MINIO_ROOT_PASSWORD: minio@minio
       MINIO_REGION: cn-west-1
+      TZ: CST-8
     command: server /data --console-address ":9001" --address ":9000"
     volumes:
       - ./minio/data:/data
@@ -58,6 +59,7 @@ services:
   #     # 性能配置
   #     TUS_LARGE_FILE_THRESHOLD: "1073741824"      # 1GB
   #     TUS_VERY_LARGE_FILE_THRESHOLD: "5368709120" # 5GB
+  #     TZ: "Asia/Shanghai"
   #   depends_on:
   #     - minio
   #   healthcheck:
@@ -79,6 +81,7 @@ services:
       AWS_ACCESS_KEY_ID: minio@minio
       AWS_SECRET_ACCESS_KEY: minio@minio
       AWS_REGION: cn-west-1
+      TZ: CST-8
     # 修改webhook地址指向Python服务
     command: >
       -s3-bucket oss 
